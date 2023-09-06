@@ -5,12 +5,15 @@ use std::process::exit;
 use clap::{Command, crate_authors, crate_version};
 use log::error;
 use routinator::{Config, ExitError, Operation};
+use routinator::dump::{DBDump, DB_DUMP};
+use std::sync::Mutex;
 
 // Since `main` with a result currently insists on printing a message, but
 // in our case we only get an `ExitError` if all is said and done, we make our
 // own, more quiet version.
 fn _main() -> Result<(), ExitError> {
     Operation::prepare()?;
+    let _ = DB_DUMP.set(Mutex::new(DBDump::new()));
     let cur_dir = match current_dir() {
         Ok(dir) => dir,
         Err(err) => {
@@ -31,7 +34,9 @@ fn _main() -> Result<(), ExitError> {
     let operation = Operation::from_arg_matches(
         &matches, &cur_dir, &mut config
     )?;
-    operation.run(config)
+    operation.run(config)?;
+    DB_DUMP.get().unwrap().lock().unwrap().dump();
+    return Ok(());
 }
 
 fn main() {

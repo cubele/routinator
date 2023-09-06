@@ -49,6 +49,7 @@ use crate::metrics::{
 };
 use crate::store::{Store, StoredManifest, StoredObject, StoredPoint};
 use crate::utils::str::str_from_ascii;
+use crate::dump::DB_DUMP;
 
 
 //------------ Configuration -------------------------------------------------
@@ -479,6 +480,8 @@ impl<'a, P: ProcessRun> Run<'a, P> {
             };
             debug!("Found valid trust anchor {}. Processing.", uri);
 
+            let tal_pk = cert.cert().subject_key_identifier();
+            DB_DUMP.get().unwrap().lock().unwrap().add_tal(tal_pk);
             match self.processor.process_ta(
                 task.tal, uri, &cert, cert.tal
             )? {
@@ -543,7 +546,17 @@ impl<'a, P: ProcessRun> Run<'a, P> {
             had_err.store(true, Ordering::Relaxed);
             Failed
         })?;
+        let parent_pk = task.cert.cert().subject_key_identifier();
         for task in more_tasks {
+            let rcert = task.cert.cert();
+            let pk = rcert.subject_key_identifier();
+            let v4 = rcert.v4_resources();
+            let v6 = rcert.v6_resources();
+            let asn = rcert.as_resources();
+            DB_DUMP.get().unwrap().lock().unwrap().add_ca_cert(
+                parent_pk, pk,
+                v4.clone(), v6.clone(), asn.clone()
+            );
             if had_err.load(Ordering::Relaxed) {
                 return Err(Failed)
             }
@@ -1369,6 +1382,15 @@ impl<'a, P: ProcessRun> PubPoint<'a, P> {
             |cert| manifest.check_crl(cert)
         ) {
             Ok((cert, route)) => {
+                let parent_pk = self.cert.cert().subject_key_identifier();
+                let pk = cert.subject_key_identifier();
+                let v4 = route.v4_addrs();
+                let v6 = route.v6_addrs();
+                let asn = route.as_id();
+                DB_DUMP.get().unwrap().lock().unwrap().add_roa(
+                    parent_pk, pk,
+                    v4.clone(), v6.clone(), asn.into()
+                );
                 manifest.metrics.valid_roas += 1;
                 self.processor.process_roa(uri, cert, route)?
             }

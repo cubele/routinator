@@ -3,3 +3,4 @@
 /rpki-cache/repository
 /.cargo
 /doc/manual/build/
+/output/
