@@ -1,10 +1,12 @@
 use std::sync::{OnceLock, Mutex};
-
+use std::net::{Ipv4Addr, Ipv6Addr};
 use rpki::repository::resources::{
     AsBlocks, IpBlocks,
 };
 use rpki::repository::roa::RoaIpAddresses;
 use rpki::crypto::keys::KeyIdentifier;
+
+use serde::{ser::{SerializeSeq, SerializeStruct}, Serialize};
 
 pub struct CaCertDump {
     parent: KeyIdentifier,
@@ -12,6 +14,71 @@ pub struct CaCertDump {
     v4_resources: IpBlocks,
     v6_resources: IpBlocks,
     as_resources: AsBlocks,
+}
+
+struct Unpackedv4(IpBlocks);
+
+#[derive(Serialize)]
+struct V4Block {
+    start: Ipv4Addr,
+    end: Ipv4Addr,
+}
+
+impl Serialize for Unpackedv4 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_seq(None)?;
+        for v4 in self.0.iter() {
+            let start = v4.min().to_v4();
+            let end = v4.max().to_v4();
+            let block = V4Block {
+                start,
+                end,
+            };
+            state.serialize_element(&block)?;
+        }
+        state.end()
+    }
+}
+
+struct Unpackedv6(IpBlocks);
+
+#[derive(Serialize)]
+struct V6Block {
+    start: Ipv6Addr,
+    end: Ipv6Addr,
+}
+
+impl Serialize for Unpackedv6 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_seq(None)?;
+        for v6 in self.0.iter() {
+            let start = v6.min().to_v6();
+            let end = v6.max().to_v6();
+            let block = V6Block {
+                start,
+                end,
+            };
+            state.serialize_element(&block)?;
+        }
+        state.end()
+    }
+}
+
+impl Serialize for CaCertDump {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_struct("CaCertDump", 5)?;
+        state.serialize_field("parent", &self.parent)?;
+        state.serialize_field("id", &self.id)?;
+        let v4 = Unpackedv4(self.v4_resources.clone());
+        state.serialize_field("v4_resources", &v4)?;
+        let v6 = Unpackedv6(self.v6_resources.clone());
+        state.serialize_field("v6_resources", &v6)?;
+        state.serialize_field("as_resources", &self.as_resources)?;
+        state.end()
+    }
 }
 
 pub struct ROADump {
@@ -22,10 +89,80 @@ pub struct ROADump {
     as_number: u32,
 }
 
+struct UnpackedRoav4(RoaIpAddresses);
+
+#[derive(Serialize)]
+struct V4Roa {
+    start: Ipv4Addr,
+    end: Ipv4Addr,
+    max_length: u8,
+}
+
+impl Serialize for UnpackedRoav4 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_seq(None)?;
+        for v4 in self.0.iter() {
+            let (start, end) = v4.range();
+            let ml = v4.max_length().unwrap_or(0);
+            let roa = V4Roa {
+                start: start.to_v4(),
+                end: end.to_v4(),
+                max_length: ml,
+            };
+            state.serialize_element(&roa)?;
+        }
+        state.end()
+    }
+}
+
+struct UnpackedRoav6(RoaIpAddresses);
+
+#[derive(Serialize)]
+struct V6Roa {
+    start: Ipv6Addr,
+    end: Ipv6Addr,
+    max_length: u8,
+}
+
+impl Serialize for UnpackedRoav6 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_seq(None)?;
+        for v6 in self.0.iter() {
+            let (start, end) = v6.range();
+            let ml = v6.max_length().unwrap_or(0);
+            let roa = V6Roa {
+                start: start.to_v6(),
+                end: end.to_v6(),
+                max_length: ml,
+            };
+            state.serialize_element(&roa)?;
+        }
+        state.end()
+    }
+}
+
+impl Serialize for ROADump {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_struct("ROADump", 5)?;
+        state.serialize_field("parent", &self.parent)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("as_number", &self.as_number)?;
+        let uv4 = UnpackedRoav4(self.v4_resources.clone());
+        state.serialize_field("v4_resources", &uv4)?;
+        let uv6 = UnpackedRoav6(self.v6_resources.clone());
+        state.serialize_field("v6_resources", &uv6)?;
+        state.end()
+    }
+}
+
+#[derive(Serialize)]
 pub struct DBDump {
+    tals: Vec<KeyIdentifier>,
     ca_certs: Vec<CaCertDump>,
     roas: Vec<ROADump>,
-    tals: Vec<KeyIdentifier>,
 }
 
 impl DBDump {
@@ -76,6 +213,9 @@ impl DBDump {
     }
 
     pub fn dump(&self) {
+        let json = serde_json::to_string_pretty(&self).unwrap();
+        println!("{}", json);
+        /*
         println!("TALs:");
         for tal in &self.tals {
             println!("  ID: {}", tal);
@@ -104,6 +244,7 @@ impl DBDump {
                 println!("    IPv6: {} Max: {}", prefix, ml);
             }
         }
+        */
     }
 }
 
