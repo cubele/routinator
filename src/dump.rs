@@ -3,17 +3,22 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use rpki::repository::resources::{
     AsBlocks, IpBlocks,
 };
-use rpki::repository::roa::RoaIpAddresses;
-use rpki::crypto::keys::KeyIdentifier;
+use rpki::repository::roa::{RoaIpAddresses, RouteOriginAttestation};
+use rpki::repository::cert::ResourceCert;
+use rpki::crypto::keys::{KeyIdentifier, PublicKey};
 
+use rpki::repository::x509::Time;
 use serde::{ser::{SerializeSeq, SerializeStruct}, Serialize};
 
 pub struct CaCertDump {
     parent: KeyIdentifier,
     id: KeyIdentifier,
+    pubkey: PublicKey,
     v4_resources: IpBlocks,
     v6_resources: IpBlocks,
     as_resources: AsBlocks,
+    not_before: Time,
+    not_after: Time,
 }
 
 struct Unpackedv4(IpBlocks);
@@ -69,14 +74,17 @@ impl Serialize for Unpackedv6 {
 impl Serialize for CaCertDump {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer {
-        let mut state = serializer.serialize_struct("CaCertDump", 5)?;
+        let mut state = serializer.serialize_struct("CaCertDump", 7)?;
         state.serialize_field("parent", &self.parent)?;
         state.serialize_field("id", &self.id)?;
+        state.serialize_field("pubkey", &self.pubkey)?;
         let v4 = Unpackedv4(self.v4_resources.clone());
         state.serialize_field("v4_resources", &v4)?;
         let v6 = Unpackedv6(self.v6_resources.clone());
         state.serialize_field("v6_resources", &v6)?;
         state.serialize_field("as_resources", &self.as_resources)?;
+        state.serialize_field("not_before", &self.not_before)?;
+        state.serialize_field("not_after", &self.not_after)?;
         state.end()
     }
 }
@@ -84,9 +92,12 @@ impl Serialize for CaCertDump {
 pub struct ROADump {
     parent: KeyIdentifier,
     id: KeyIdentifier,
+    pubkey: PublicKey,
     v4_resources: RoaIpAddresses,
     v6_resources: RoaIpAddresses,
     as_number: u32,
+    not_before: Time,
+    not_after: Time,
 }
 
 struct UnpackedRoav4(RoaIpAddresses);
@@ -146,14 +157,17 @@ impl Serialize for UnpackedRoav6 {
 impl Serialize for ROADump {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer {
-        let mut state = serializer.serialize_struct("ROADump", 5)?;
+        let mut state = serializer.serialize_struct("ROADump", 7)?;
         state.serialize_field("parent", &self.parent)?;
         state.serialize_field("id", &self.id)?;
+        state.serialize_field("pubkey", &self.pubkey)?;
         state.serialize_field("as_number", &self.as_number)?;
         let uv4 = UnpackedRoav4(self.v4_resources.clone());
         state.serialize_field("v4_resources", &uv4)?;
         let uv6 = UnpackedRoav6(self.v6_resources.clone());
         state.serialize_field("v6_resources", &uv6)?;
+        state.serialize_field("not_before", &self.not_before)?;
+        state.serialize_field("not_after", &self.not_after)?;
         state.end()
     }
 }
@@ -177,34 +191,49 @@ impl DBDump {
     pub fn add_ca_cert(
         &mut self,
         parent: KeyIdentifier,
-        id: KeyIdentifier,
-        v4_resources: IpBlocks,
-        v6_resources: IpBlocks,
-        as_resources: AsBlocks,
+        rcert: &ResourceCert
     ) {
+        let pk = rcert.subject_key_identifier();
+        let pk_full = rcert.subject_public_key_info();
+        let v4 = rcert.v4_resources();
+        let v6 = rcert.v6_resources();
+        let asn = rcert.as_resources();
+        let validity = rcert.validity();
+        let (l, r) = (validity.not_before(), validity.not_after());
         self.ca_certs.push(CaCertDump {
             parent,
-            id,
-            v4_resources,
-            v6_resources,
-            as_resources,
+            id: pk,
+            pubkey: pk_full.clone(),
+            v4_resources: v4.clone(),
+            v6_resources: v6.clone(),
+            as_resources: asn.clone(),
+            not_before: l,
+            not_after: r,
         });
     }
 
     pub fn add_roa(
         &mut self,
         parent: KeyIdentifier,
-        id: KeyIdentifier,
-        v4_resources: RoaIpAddresses,
-        v6_resources: RoaIpAddresses,
-        as_number: u32,
+        rcert: &ResourceCert,
+        route: &RouteOriginAttestation,
     ) {
+        let pk = rcert.subject_key_identifier();
+        let pk_full = rcert.subject_public_key_info();
+        let v4 = route.v4_addrs();
+        let v6 = route.v6_addrs();
+        let asn = route.as_id();
+        let validity = rcert.validity();
+        let (l, r) = (validity.not_before(), validity.not_after());
         self.roas.push(ROADump {
             parent,
-            id,
-            v4_resources,
-            v6_resources,
-            as_number,
+            id: pk,
+            pubkey: pk_full.clone(),
+            v4_resources: v4.clone(),
+            v6_resources: v6.clone(),
+            as_number: asn.into(),
+            not_before: l,
+            not_after: r,
         });
     }
 

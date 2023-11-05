@@ -549,13 +549,8 @@ impl<'a, P: ProcessRun> Run<'a, P> {
         let parent_pk = task.cert.cert().subject_key_identifier();
         for task in more_tasks {
             let rcert = task.cert.cert();
-            let pk = rcert.subject_key_identifier();
-            let v4 = rcert.v4_resources();
-            let v6 = rcert.v6_resources();
-            let asn = rcert.as_resources();
             DB_DUMP.get().unwrap().lock().unwrap().add_ca_cert(
-                parent_pk, pk,
-                v4.clone(), v6.clone(), asn.clone()
+                parent_pk, rcert
             );
             if had_err.load(Ordering::Relaxed) {
                 return Err(Failed)
@@ -1383,13 +1378,8 @@ impl<'a, P: ProcessRun> PubPoint<'a, P> {
         ) {
             Ok((cert, route)) => {
                 let parent_pk = self.cert.cert().subject_key_identifier();
-                let pk = cert.subject_key_identifier();
-                let v4 = route.v4_addrs();
-                let v6 = route.v6_addrs();
-                let asn = route.as_id();
                 DB_DUMP.get().unwrap().lock().unwrap().add_roa(
-                    parent_pk, pk,
-                    v4.clone(), v6.clone(), asn.into()
+                    parent_pk, &cert, &route
                 );
                 manifest.metrics.valid_roas += 1;
                 self.processor.process_roa(uri, cert, route)?
