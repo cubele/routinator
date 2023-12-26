@@ -481,7 +481,7 @@ impl<'a, P: ProcessRun> Run<'a, P> {
             debug!("Found valid trust anchor {}. Processing.", uri);
 
             let tal_pk = cert.cert().subject_key_identifier();
-            DB_DUMP.get().unwrap().lock().unwrap().add_tal(tal_pk);
+            DB_DUMP.get().unwrap().lock().unwrap().add_tal(tal_pk, task.tal.info().name());
             match self.processor.process_ta(
                 task.tal, uri, &cert, cert.tal
             )? {

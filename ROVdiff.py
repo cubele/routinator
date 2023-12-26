@@ -10,15 +10,20 @@ def genROV(file):
     roas = {}
     for roa in data["roas"]:
         roas[roa["id"]] = roa
-    tals = data["tals"]
+    tals = {}
+    for tal in data["tals"]:
+        tals[tal["name"]] = tal
     return tals, cacerts, roas
 
-def diffROV(file, tals, cacerts, roas):
-    with open(file, 'r') as f:
-        data = json.load(f)
-    tals2, cas2, roas2 = data["tals"], data["ca_certs"], data["roas"]
+def diffROV(file1, file2):
     cachanges = []
     roachanges = []
+    talchanges = []
+    talchanged = False
+    tals, cacerts, roas = genROV(file1) # old
+    with open(file2, 'r') as f:
+        data = json.load(f)
+    tals2, cas2, roas2 = data["tals"], data["ca_certs"], data["roas"] # new
     for ca in cas2:
         caid = ca["id"]
         if not caid in cacerts:
@@ -31,7 +36,31 @@ def diffROV(file, tals, cacerts, roas):
             roachanges.append({"before": {}, "after": roa})
         elif roas[roaid] != roa:
             roachanges.append({"before": roas[roaid], "after": roa})
-    return cachanges, roachanges
+    for tal in tals2:
+        talname = tal["name"]
+        if not talname in tals or tals[talname] != tal:
+            talchanged = True
+
+    tals, cacerts, roas = genROV(file2)
+    with open(file1, 'r') as f:
+        data = json.load(f)
+    tals1, cas1, roas1 = data["tals"], data["ca_certs"], data["roas"] # old
+    for ca in cas1:
+        caid = ca["id"]
+        if not caid in cacerts:
+            cachanges.append({"before": ca, "after": {}})
+    for roa in roas1:
+        roaid = roa["id"]
+        if not roaid in roas:
+            roachanges.append({"before": roa, "after": {}})
+    for tal in tals1:
+        talname = tal["name"]
+        if not talname in tals or tals[talname] != tal:
+            talchanged = True
+    if talchanged:
+        talchanges = [tals1, tals2]
+    
+    return talchanges, cachanges, roachanges
 
 if len(sys.argv) != 4:
     print("Usage: python ROVdiff.py file1 file2 out")
@@ -41,9 +70,8 @@ file1 = sys.argv[1]
 file2 = sys.argv[2]
 out = sys.argv[3]
 
-tals, ca_certs, roas = genROV(file1)
-cachanges, roachanges = diffROV(file2, tals, ca_certs, roas)
-res = {"cadiff": cachanges, "roadiff": roachanges}
+talchanges, cachanges, roachanges = diffROV(file1, file2)
+res = {"taldiff": talchanges, "cadiff": cachanges, "roadiff": roachanges}
 
 with open(out, 'w') as f:
     json.dump(res, f, indent=2)

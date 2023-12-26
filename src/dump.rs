@@ -1,5 +1,6 @@
 use std::sync::{OnceLock, Mutex};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use log::warn;
 use rpki::repository::resources::{
     AsBlocks, IpBlocks,
 };
@@ -7,12 +8,14 @@ use rpki::repository::roa::{RoaIpAddresses, RouteOriginAttestation};
 use rpki::repository::cert::ResourceCert;
 use rpki::crypto::keys::{KeyIdentifier, PublicKey};
 
-use rpki::repository::x509::Time;
+use rpki::repository::x509::{Time, Name};
 use serde::{ser::{SerializeSeq, SerializeStruct}, Serialize};
 
 pub struct CaCertDump {
     parent: KeyIdentifier,
     id: KeyIdentifier,
+    issuer: Name,
+    subject: Name,
     pubkey: PublicKey,
     v4_resources: IpBlocks,
     v6_resources: IpBlocks,
@@ -74,9 +77,11 @@ impl Serialize for Unpackedv6 {
 impl Serialize for CaCertDump {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer {
-        let mut state = serializer.serialize_struct("CaCertDump", 7)?;
+        let mut state = serializer.serialize_struct("CaCertDump", 9)?;
         state.serialize_field("parent", &self.parent)?;
         state.serialize_field("id", &self.id)?;
+        state.serialize_field("issuer", &self.issuer)?;
+        state.serialize_field("subject", &self.subject)?;
         state.serialize_field("pubkey", &self.pubkey)?;
         let v4 = Unpackedv4(self.v4_resources.clone());
         state.serialize_field("v4_resources", &v4)?;
@@ -92,6 +97,8 @@ impl Serialize for CaCertDump {
 pub struct ROADump {
     parent: KeyIdentifier,
     id: KeyIdentifier,
+    issuer: Name,
+    subject: Name,
     pubkey: PublicKey,
     v4_resources: RoaIpAddresses,
     v6_resources: RoaIpAddresses,
@@ -157,9 +164,11 @@ impl Serialize for UnpackedRoav6 {
 impl Serialize for ROADump {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer {
-        let mut state = serializer.serialize_struct("ROADump", 7)?;
+        let mut state = serializer.serialize_struct("ROADump", 9)?;
         state.serialize_field("parent", &self.parent)?;
         state.serialize_field("id", &self.id)?;
+        state.serialize_field("issuer", &self.issuer)?;
+        state.serialize_field("subject", &self.subject)?;
         state.serialize_field("pubkey", &self.pubkey)?;
         state.serialize_field("as_number", &self.as_number)?;
         let uv4 = UnpackedRoav4(self.v4_resources.clone());
@@ -172,9 +181,24 @@ impl Serialize for ROADump {
     }
 }
 
+struct TALDump {
+    id: KeyIdentifier,
+    name: String,
+}
+
+impl Serialize for TALDump {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer {
+        let mut state = serializer.serialize_struct("TALDump", 2)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        state.end()
+    }
+}
+
 #[derive(Serialize)]
 pub struct DBDump {
-    tals: Vec<KeyIdentifier>,
+    tals: Vec<TALDump>,
     ca_certs: Vec<CaCertDump>,
     roas: Vec<ROADump>,
 }
@@ -194,6 +218,18 @@ impl DBDump {
         rcert: &ResourceCert
     ) {
         let pk = rcert.subject_key_identifier();
+        let parent_pk = rcert.authority_key_identifier();
+        if let Some(pk) = parent_pk {
+            if parent != pk {
+                warn!("Parent field mismatch in {}", pk);
+                warn!("  Expected: {}", parent);
+                warn!("  Got: {}", pk);
+            }
+        } else {
+            warn!("No parent field in {}", pk)
+        }
+        let issuer = rcert.issuer();
+        let subject = rcert.subject();
         let pk_full = rcert.subject_public_key_info();
         let v4 = rcert.v4_resources();
         let v6 = rcert.v6_resources();
@@ -203,6 +239,8 @@ impl DBDump {
         self.ca_certs.push(CaCertDump {
             parent,
             id: pk,
+            issuer: issuer.clone(),
+            subject: subject.clone(),
             pubkey: pk_full.clone(),
             v4_resources: v4.clone(),
             v6_resources: v6.clone(),
@@ -220,6 +258,18 @@ impl DBDump {
     ) {
         let pk = rcert.subject_key_identifier();
         let pk_full = rcert.subject_public_key_info();
+        let parent_pk = rcert.authority_key_identifier();
+        if let Some(pk) = parent_pk {
+            if parent != pk {
+                warn!("Parent field mismatch in {}", pk);
+                warn!("  Expected: {}", parent);
+                warn!("  Got: {}", pk);
+            }
+        } else {
+            warn!("No parent field in {}", pk)
+        }
+        let issuer = rcert.issuer();
+        let subject = rcert.subject();
         let v4 = route.v4_addrs();
         let v6 = route.v6_addrs();
         let asn = route.as_id();
@@ -228,6 +278,8 @@ impl DBDump {
         self.roas.push(ROADump {
             parent,
             id: pk,
+            issuer: issuer.clone(),
+            subject: subject.clone(),
             pubkey: pk_full.clone(),
             v4_resources: v4.clone(),
             v6_resources: v6.clone(),
@@ -237,8 +289,11 @@ impl DBDump {
         });
     }
 
-    pub fn add_tal(&mut self, id: KeyIdentifier) {
-        self.tals.push(id);
+    pub fn add_tal(&mut self, id: KeyIdentifier, name: &str) {
+        self.tals.push(TALDump {
+            id,
+            name: name.to_string(),
+        });
     }
 
     pub fn dump(&self) {
